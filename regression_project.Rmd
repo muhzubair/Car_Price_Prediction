@@ -1,0 +1,208 @@
+---
+title: "Project_1_regression"
+author: "Muhammad Zubair"
+date: "10/14/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,  fig.align='Center')
+```
+
+## Link to the dataset: https://www.kaggle.com/zaynshahbaz/pakistan-car-prices
+
+```{r}
+# Reading in the data 
+df <- read.csv("updated_pakwheels.csv")
+```
+
+# Data Exploration
+
+```{r}
+# Viewing the first 5 rows of dataset
+head(df)
+```
+```{r}
+# Viewing the last 5 rows of data
+tail(df)
+```
+
+#### Our dataset have 46k rows and 16 attributes
+```{r}
+# Dimensions of our data
+dim(df)
+```
+#### Columns with long descriptions and sentences will need to be droped, also the rest of the columns will be converted into factor variable
+```{r}
+# Data types for each column in our dataset
+str(df)
+```
+
+```{r}
+# Running some stats on the dataset
+summary(df)
+```
+
+```{r}
+# Checking for null values in our data
+sapply(df, function(x) sum(is.na(x)))
+```
+
+# Data cleaning 
+
+### Link to dataset: https://www.kaggle.com/zaynshahbaz/pakistan-car-prices
+
+
+##### Dropping the URL, last updated, ad.no columns, and features because they will be no use in doing regression
+```{r}
+df <- subset(df, select = -c(Ad.No, Last.Updated, URL, Features, Color))
+head(df)
+```
+
+##### Splitting the name column to only have the value for car brand
+```{r}
+library(stringr)
+df$Name = sub("\\ .*", "", as.character(df$Name))
+```
+
+
+##### Making registered_city into a True or false column, then dropping registered.city col 
+```{r}
+df <- subset(df, select = -c(Location))
+df["Registered"] <- FALSE
+df$Registered[df$Registered.City!="Un-Registered"] <- TRUE
+df <- subset(df, select = -c(Registered.City))
+```
+
+##### Turning imported and local into a true or false column, then dropping the Assembly col
+```{r}
+df["Local"] <- FALSE
+df$Local[df$Assembly=="Local"] <- TRUE
+df <- subset(df, select = -c(Assembly))
+```
+
+##### Making columns into factor and numeric to enhance our model implementation for categorical and integer values
+```{r}
+df$Registered <- as.factor(df$Registered)
+df$Transmission <- as.factor(df$Transmission)
+df$Engine.Type <- as.factor(df$Engine.Type)
+df$Body.Type <- as.factor(df$Body.Type)
+df$Local <- as.factor(df$Local)
+df$Name <- as.factor(df$Name)
+df[sapply(df, is.integer)] <- lapply(df[sapply(df, is.integer)], as.numeric)
+str(df)
+```
+
+# Visual Data exploration
+#### Correlation matrix to identify which numeirc coulumns to use in dataset
+```{r}
+library(corrplot)
+source("http://www.sthda.com/upload/rquery_cormat.r")
+df_numeric <- df[sapply(df, is.numeric)]
+rquery.cormat(df_numeric, type="full")
+```
+
+#### Barplot to identify which cars are most popular in Pakistan
+```{r}
+library(ggplot2)
+ggplot(df, aes(x = Name)) + geom_bar() + scale_x_discrete(guide = guide_axis(n.dodge=3)) + xlab("Car model") 
+```
+
+# Model Building
+
+### Linear Regression 
+```{r}
+set.seed(1234)
+spec <- c(train=.6, test=.2, validate=.2)
+i <- sample(cut(1:nrow(df),nrow(df)*cumsum(c(0,spec)), labels=names(spec)))
+train <- df[i=="train",]
+test <- df[i=="test",]
+vald <- df[i=="validate",]
+```
+
+#### I decided to use all the features in dataset because removing the features that were not correlated with price, removed noise from the data and led to lower scores of models.
+```{r}
+lm <- lm(Price~Registered+Transmission+Engine.Type+Body.Type+Local+Mileage+Engine.Capacity+Model.Year, data = train)
+summary(lm)
+```
+
+```{r}
+# Testing on the data
+pred <- predict(lm, newdata = test)
+# Computing statistical equation to interpretate our model
+print(paste('correlation:', cor(pred, test$Price)))
+mse_t <- mean((pred - test$Price)^2)
+print(paste("Rmse for test data: ", sqrt(mse_t)))
+```
+
+
+### Decision Tree
+```{r}
+library(tree)
+tree1 <- tree(Price~Name+Registered+Transmission+Engine.Type+Body.Type+Local+Mileage+Engine.Capacity+Model.Year, data = train)
+summary(tree1)
+```
+
+##### Decision Tree performed much better than linear regression because our correlation got alot higher and the RMSE got relatively lower.
+```{r}
+pred_tree <- predict(tree1, newdata=test)
+print(paste('correlation:', cor(pred_tree, test$Price)))
+rmse_tree <- sqrt(mean((pred_tree-test$Price)^2))
+print(paste('rmse:', rmse_tree))
+```
+
+### Cross validation 
+##### We will prune the tree to 5 terminal nodes because we want to avoid overfitting by pruning it to a node with smallest deviance. 
+```{r}
+cv_tree <- cv.tree(tree1)
+plot(cv_tree$size, cv_tree$dev, type='b')
+```
+
+### Pruning the tree, and then testing.
+##### In this case, the pruning did not improve results on test data because we got a higher correlation and a lower RMSE for the unpruned Tree.
+```{r}
+tree_pruned <- prune.tree(tree1, best=5)
+pred_pruned <- predict(tree_pruned, newdata=test)
+print(paste('correlation:', cor(pred_pruned, test$Price))) 
+rmse_pruned <- sqrt(mean((pred_pruned-test$Price)^2))
+print(paste('rmse pruned:', rmse_pruned))
+```
+
+### Support Vector machines
+```{r}
+library(e1071)
+svm1 <- svm(Price~Registered+Transmission+Engine.Type+Body.Type+Local+Mileage+Engine.Capacity+Model.Year, data=train, kernel="linear", cost=10, scale=TRUE)
+summary(svm1)
+pred <- predict(svm1, newdata=test)
+```
+
+##### SVM got a lower correlation than decision tree and linear regression. The RMSE for SVM was also higher from decision tree and linear regression. I decided not to do hyper parameter tuning for SVM because it took alot of time and was unable to find the optimal paramters, as it gave a warning message "WARNING: reaching max number of iterations".
+```{r}
+cor_svm1 <- cor(pred, test$Price)
+print(paste('correlation:', cor(pred, test$Price))) 
+rmse_svm1 <- sqrt(mean((pred - test$Price)^2))
+print(paste('rmse:', rmse_svm1))
+```
+
+# Results Analysis
+
+### Correlation for these algortihms: 
+##### Decision Tree: 0.90
+##### Pruned Decision Tree: 0.85
+##### Linear regression: 0.77
+##### Support vector machine: 0.74
+
+### RMSE for these algortihms:
+##### Decision Tree: 1,429,424 (PKR Rupees) or $6,000
+##### Pruned Decision Tree: 1,714,840 (PKR Rupees) or $9,600
+##### Linear regression: 2,051,290 (PKR Rupees) or $12,000
+##### Support vector machine: 2,420,531 (PKR Rupees) or $12,400
+
+### Summary: 
+#### Decision tree performed much more efficiently than SVM and linear regression. Our decision tree was off by only about 1.4 million (Rupees) or $6,000 compared to the other algorithms which were off by more than 2 million (Rupees) or $12,000. Linear regrssion works much better when our data is linear, however decision tree work better with more qualatitive and factor values and with more complex data. Pruning the decision tree also did not help improve perfromance of our data. In our case, our data was much more complex because our variables were not much correlated with the price, which is why decision tree performed better. On the other hand, Support vector machine took alot of time to compile and failed to give efficent results since it is performing dot product of training examples and our data had already been scaled. Furthermore, this script can defientely be useful in the new data because it was able to learn different variations in prices of car based on car's attributes, as we got a correlation of 0.90 and was off by $6,000.
+
+
+
+
+
+
